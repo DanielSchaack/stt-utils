@@ -1,7 +1,5 @@
 import wave
 import pyaudio
-import sys
-import time
 import gc
 import torch
 from typing import Tuple, Any
@@ -10,12 +8,10 @@ import numpy as np
 import whisper
 
 FORMAT = pyaudio.paInt16
-CHANNELS = 1 if sys.platform == 'darwin' else 2
+CHANNELS = 1
 RATE = 16000
-CHUNK = RATE
+CHUNK = RATE * 5
 RECORD_SECONDS = 15
-
-SAMPLE_RATE = 16000
 
 
 def record(filename: str):
@@ -29,7 +25,6 @@ def record(filename: str):
 
         print('Recording...')
         for _ in range(0, RATE // CHUNK * RECORD_SECONDS):
-
             wf.writeframes(stream.read(CHUNK))
         print('Done')
 
@@ -43,7 +38,7 @@ def replay(filename: str):
 
         stream = p.open(format=pyaudio.paInt16,
                         channels=CHANNELS,
-                        rate=SAMPLE_RATE,
+                        rate=RATE,
                         # input=True,
                         output=True,
                         frames_per_buffer=CHUNK)
@@ -56,6 +51,43 @@ def replay(filename: str):
         p.terminate()
 
 
+def transcribe_file(filename: str):
+    model = whisper.load_model("turbo")
+    # result = model.transcribe(audio=filename, language="de", verbose=True)
+    # print(result["text"])
+    p = pyaudio.PyAudio()
+
+    stream = p.open(format=FORMAT,
+                    channels=CHANNELS,
+                    rate=RATE,
+                    input=True,
+                    frames_per_buffer=CHUNK)
+
+    print("Start reading")
+    total_data = b""
+
+    while True:
+        data = stream.read(CHUNK)
+        print("CHUNK read")
+        total_data += data
+        np_data = np.frombuffer(data, np.int16).flatten().astype(np.float32) / 32768.0
+        audio = whisper.pad_or_trim(np_data)
+        mel = whisper.log_mel_spectrogram(audio, n_mels=128).to(model.device)
+        options = whisper.DecodingOptions(language="de", beam_size=5, fp16=False)
+        result = whisper.decode(model, mel, options)
+        print(result)
+        # result = model.transcribe(audio=np_data,
+        #                           language="de",
+        #                           beam_size=5,
+        #                           fp16=False,
+        #                           verbose=True)
+        # print(result["text"])
+
+    stream.close()
+
+    p.terminate()
+
+
 def transcribe():
     model = whisper.load_model("turbo")
     # result = model.transcribe(audio=filename, language="de", verbose=True)
@@ -65,7 +97,7 @@ def transcribe():
 
     stream = p.open(format=pyaudio.paInt16,
                     channels=CHANNELS,
-                    rate=SAMPLE_RATE,
+                    rate=RATE,
                     input=True,
                     output=True,
                     frames_per_buffer=CHUNK)
@@ -79,13 +111,14 @@ def transcribe():
         total_data += data
         stream.write(data)
         print("CHUNK replayed")
-        np_data = np.frombuffer(total_data, np.int16).flatten().astype(np.float32) / 32768.0
-        result = model.transcribe(audio=np_data,
-                                  language="en",
+        np_data = np.frombuffer(data, np.int16).flatten().astype(np.float32) / 32768.0
+        padded = whisper.pad_or_trim(np_data)
+        result = model.transcribe(audio=padded,
+                                  language="de",
                                   beam_size=5,
                                   fp16=False,
                                   verbose=True)
-        # print(result["text"])
+        print(result["text"])
 
     stream.close()
 
@@ -121,9 +154,10 @@ def callback_replay_input(in_data, frame_count, time_info, status) -> Tuple[Any,
 
 if __name__ == "__main__":
     try:
-        # record("output.wav")
-        # replay("output.wav")
-        transcribe()
+        # record("test.wav")
+        # replay("test.wav")
+        transcribe_file("test.wav")
+        # transcribe()
     except Exception as e:
         print(e)
     finally:

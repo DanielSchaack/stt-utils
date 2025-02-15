@@ -15,6 +15,7 @@ class recording():
     def transcribe(self):
         pass
 
+pvecording.py
     def validate_words(self):
         pass
 
