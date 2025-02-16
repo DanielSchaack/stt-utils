@@ -1,11 +1,9 @@
 import wave
 import pyaudio
 import gc
-import torch
 from typing import Tuple, Any
 
 import numpy as np
-import whisper
 
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
@@ -52,7 +50,7 @@ def replay(filename: str):
 
 
 def transcribe_file(filename: str):
-    model = whisper.load_model("turbo")
+    # model = whisper.load_model("turbo")
     # result = model.transcribe(audio=filename, language="de", verbose=True)
     # print(result["text"])
     p = pyaudio.PyAudio()
@@ -70,12 +68,12 @@ def transcribe_file(filename: str):
         data = stream.read(CHUNK)
         print("CHUNK read")
         total_data += data
-        np_data = np.frombuffer(data, np.int16).flatten().astype(np.float32) / 32768.0
-        audio = whisper.pad_or_trim(np_data)
-        mel = whisper.log_mel_spectrogram(audio, n_mels=128).to(model.device)
-        options = whisper.DecodingOptions(language="de", beam_size=5, fp16=False)
-        result = whisper.decode(model, mel, options)
-        print(result)
+        # np_data = np.frombuffer(data, np.int16).flatten().astype(np.float32) / 32768.0
+        # audio = whisper.pad_or_trim(np_data)
+        # mel = whisper.log_mel_spectrogram(audio, n_mels=128).to(model.device)
+        # options = whisper.DecodingOptions(language="de", beam_size=5, fp16=False)
+        # result = whisper.decode(model, mel, options)
+        # print(result)
         # result = model.transcribe(audio=np_data,
         #                           language="de",
         #                           beam_size=5,
@@ -89,7 +87,7 @@ def transcribe_file(filename: str):
 
 
 def transcribe():
-    model = whisper.load_model("turbo")
+    # model = whisper.load_model("turbo")
     # result = model.transcribe(audio=filename, language="de", verbose=True)
     # print(result["text"])
 
@@ -111,14 +109,14 @@ def transcribe():
         total_data += data
         stream.write(data)
         print("CHUNK replayed")
-        np_data = np.frombuffer(data, np.int16).flatten().astype(np.float32) / 32768.0
-        padded = whisper.pad_or_trim(np_data)
-        result = model.transcribe(audio=padded,
-                                  language="de",
-                                  beam_size=5,
-                                  fp16=False,
-                                  verbose=True)
-        print(result["text"])
+        # np_data = np.frombuffer(data, np.int16).flatten().astype(np.float32) / 32768.0
+        # padded = whisper.pad_or_trim(np_data)
+        # result = model.transcribe(audio=padded,
+        #                           language="de",
+        #                           beam_size=5,
+        #                           fp16=False,
+        #                           verbose=True)
+        # print(result["text"])
 
     stream.close()
 
@@ -152,15 +150,31 @@ def callback_replay_input(in_data, frame_count, time_info, status) -> Tuple[Any,
     return (in_data, pyaudio.paContinue)
 
 
+def compare_transcriptions():
+    sentence_one = "Hallo, ich bin doof"
+    words_list_one = sentence_one.split()
+    sentence_two = "Hallo, ich bin doof"
+    words_list_two = sentence_two.split()
+
+    min_len = min(len(words_list_one), len(words_list_two))
+    amount_equal_words = 0
+    for i in range(min_len):
+        print(f"Word {i}: '{words_list_one[i]}', word {i}: '{words_list_two[i]}'")
+        if words_list_one[i] == words_list_one[i]:
+            print(f"Found equal word: {words_list_one[i]}")
+            amount_equal_words += 1
+
+    print(f"Found a total of {amount_equal_words} equal words: {words_list_one[i]}")
+
+
 if __name__ == "__main__":
     try:
         # record("test.wav")
         # replay("test.wav")
-        transcribe_file("test.wav")
+        # transcribe_file("test.wav")
         # transcribe()
+        compare_transcriptions()
     except Exception as e:
         print(e)
     finally:
-        # del model
-        torch.cuda.empty_cache()
         gc.collect()

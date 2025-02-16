@@ -10,8 +10,8 @@ Speech to Clipboard
 # To Do
 
 ## Must do
-- use sliding window to transfer word by word
-    - print continuous results to console
+- use sliding window to transscribe word by word
+    - (print continuous results to console)
 - add result to clipboard
 
 
@@ -21,6 +21,8 @@ Speech to Clipboard
 
 ## Mid
 - differentiate between recognized and potential words
+- Add start and stop sound as feedback
+    - Make it optional
 
 ## Optional - Frontend
 - When logic stands, add simple frontend to display recognized/potential words
