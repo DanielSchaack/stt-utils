@@ -160,11 +160,72 @@ def compare_transcriptions():
     amount_equal_words = 0
     for i in range(min_len):
         print(f"Word {i}: '{words_list_one[i]}', word {i}: '{words_list_two[i]}'")
-        if words_list_one[i] == words_list_one[i]:
+        if words_list_one[i] == words_list_two[i]:
             print(f"Found equal word: {words_list_one[i]}")
             amount_equal_words += 1
 
     print(f"Found a total of {amount_equal_words} equal words: {words_list_one[i]}")
+
+
+def compare():
+    list_of_lists = [
+            ['m', 'b', 'c'],
+            ['d', 'e', 'f'],
+            ['m', 'n', 'o'],
+            ['m', 'n', 'd']
+            ]
+    get_max_dupe(list_of_lists)
+
+
+def get_max_dupe(list_of_lists: list[list[Any]]) -> list[Any]:
+    """
+    Finds the maximum number of duplicate words between any two lists in a given list of lists.
+
+    Parameters:
+        list_of_lists (list[list[Any]]): A list containing sublists to be compared for duplicates.
+
+    Returns:
+        list[Any]: A list where each element is a tuple containing the maximum number of duplicate
+                  words and the index of the second sublist that had the most duplicates with the current sublist.
+                  If there are no duplicates, it returns 0 and -1 as the index.
+
+    Example:
+    >>> get_max_dupe([['a', 'b', 'c'], ['d', 'e', 'f'], ['m', 'n', 'o'], ['m', 'n', 'd']])
+    [(0, -1), (0, -1), (2, 3), (0, -1)]
+    """
+    max_dupes = []
+    len_lists = len(list_of_lists)
+    for i in range(len_lists):
+        current_max_dupe = 0
+        compared_to = -1
+        for j in range(i + 1, len_lists):
+            if j < len_lists:
+                amount_dupe, dupe_words = compare_lists(list_of_lists[i], list_of_lists[j])
+                compared_to = j if amount_dupe > current_max_dupe else compared_to
+                current_max_dupe = amount_dupe if amount_dupe > current_max_dupe else current_max_dupe
+
+        max_dupes.append((current_max_dupe, compared_to))
+    print(f"max dupes: {max_dupes}")
+
+    # for i, list_i in enumerate(list_of_lists):
+    #     mapped.append( [(j + 1, word) for j, word in enumerate(list_i)] )
+    #
+    # print(f"Mapped: {flatten(mapped)}")
+def flatten(list_of_lists: list[list[Any]]) -> list[Any]:
+    return [item for sublist in list_of_lists for item in sublist]
+
+
+def compare_lists(list_a: list[str], list_b: list[str]) -> tuple[int, list[str]]:
+    min_len = min(len(list_a), len(list_b))
+    duplicate = 0
+    words = []
+    for i in range(min_len):
+        if list_a[i] == list_b[i]:
+            duplicate += 1
+            words.append(list_a[i])
+        else:
+            return duplicate, words
+    return duplicate, words
 
 
 if __name__ == "__main__":
@@ -173,7 +234,8 @@ if __name__ == "__main__":
         # replay("test.wav")
         # transcribe_file("test.wav")
         # transcribe()
-        compare_transcriptions()
+        # compare_transcriptions()
+        compare()
     except Exception as e:
         print(e)
     finally:
