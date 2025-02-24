@@ -3,8 +3,6 @@ import pyaudio
 import gc
 from typing import Tuple, Any
 
-import numpy as np
-
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 16000
@@ -228,14 +226,39 @@ def compare_lists(list_a: list[str], list_b: list[str]) -> tuple[int, list[str]]
     return duplicate, words
 
 
+# the following is for OG OpenAi Whisper
+# wasn't able to get model.transcribe() working
+# so instead using whisper functions directly did work ... somehow
+# def transcribe_window(model: whisper.Whisper, np_data: np.ndarray, context: str) -> str:
+#     audio = whisper.pad_or_trim(np_data)
+#     mel = whisper.log_mel_spectrogram(audio, n_mels=128).to(model.device)
+#     options = whisper.DecodingOptions(language="de", beam_size=5, fp16=False)
+#     result = whisper.decode(model, mel, options)
+#     return result.text
+
+
+def get_index_dupes(dupes_list: list[int], index_list: list[int]) -> tuple[int, int]:
+    min_dupes = min(dupes_list)
+    index = len(index_list) - 1
+    for current_dupe in reversed(dupes_list):
+        if current_dupe == min_dupes:
+            break
+        index -= 1
+    return index, min_dupes
+
+
 if __name__ == "__main__":
+    index_list = [10, 20, 30]
+    dupes_list = [5, 15, 5]
     try:
         # record("test.wav")
         # replay("test.wav")
         # transcribe_file("test.wav")
         # transcribe()
         # compare_transcriptions()
-        compare()
+        # compare()
+        index, min_value = get_index_dupes(dupes_list, index_list)
+        print(f"Index: {index}, Minimum Value: {min_value}")
     except Exception as e:
         print(e)
     finally:

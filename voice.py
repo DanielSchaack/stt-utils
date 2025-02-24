@@ -2,9 +2,11 @@ import time
 import threading
 import queue
 import logging
+import math
 
 import gc
 from typing import Any
+from dataclasses import dataclass
 from faster_whisper import WhisperModel
 
 import numpy as np
@@ -20,9 +22,19 @@ LANGUAGE = "de"
 MAX_TIMESPAN = 10
 MIN_TIMESPAN_DONE = 5
 PROCESSING_DELAY = 0.1
-RECURRING_WORD_COUNT = 2
+MIN_DUPE_WORD_COUNT = 2
+MIN_DUPE_BETWEEN_RECORDS_NEEDED = 2
 q = queue.Queue()
 is_recording = False
+
+
+# a Word is (start: np.ndfloat64, end: np.ndfloat64, word: str (usually '<Space>word'), probability: np.ndfloat64)
+@dataclass
+class Word:
+    start: np.float64
+    end: np.float64
+    probability: np.float64
+    word: str
 
 
 def callback_send_to_queue(in_data, frame_count, time_info, status):
@@ -66,6 +78,8 @@ def consumer():
     word_lists = []
     do_run = True
     while do_run:
+        log.info(f"current confirmed transcription: {confirmed_transcribed}")
+        log.info(f"current potential transcription: {potential_transcribed}")
         if window_stop_step - window_start_step > MIN_TIMESPAN_DONE and not transcribed.strip():
             do_run = False
 
@@ -74,7 +88,7 @@ def consumer():
             q.task_done()
 
         available_chunks = len(total_data) // CHUNK
-        log.debug(f"Available chunks: {available_chunks}, current size: {len(total_data)}, current stop step: {window_stop_step}")
+        log.info(f"Available chunks: {available_chunks}, current size: {len(total_data)}, current start step: {window_start_step}, current stop step: {window_stop_step}")
 
         if window_stop_step <= available_chunks:
             np_data = get_window(total_data, window_start_step, window_stop_step, CHUNK)
@@ -84,22 +98,76 @@ def consumer():
             if len(all_words) > 0:
                 word_lists.append(all_words)
 
-            if window_stop_step - window_start_step < MAX_TIMESPAN:
+            if window_stop_step - window_start_step == MAX_TIMESPAN:
+                log.debug(f"Reached max timespan {MAX_TIMESPAN}, evaluating current words to move on")
+            else:
                 window_stop_step += 1
 
-        if len(word_lists) > 0:
-            # step_increment, confirmed_words, potential_words, word_lists_new = compare_words(word_lists)
+        if len(word_lists) >= MIN_TIMESPAN_DONE:
             max_dupes = get_max_dupe(word_lists)
             log.debug(word_lists)
             log.info(f"max dupes: {max_dupes}")
+
+            confirmed, potential = get_confirmed_potential_words(max_dupes, word_lists)
+            log.debug(f"confirmed words: {confirmed}")
+            log.debug(f"potential words: {potential}")
+
+            if confirmed is None and potential is None:
+                continue
+
+            confirmed_transcribed += get_printed_words(confirmed)
+            potential_transcribed = get_printed_words(potential)
+            log.info(f"new confirmed transcription: {confirmed_transcribed}")
+            log.info(f"new potential transcription: {potential_transcribed}")
+
+            last_confirmed_word = confirmed[-1]
+            log.info(f"last confirmed word: {last_confirmed_word}")
+            window_start_step += last_confirmed_word.end
+            window_stop_step = math.ceil(window_start_step + 1)
+            word_lists.clear()
 
         time.sleep(PROCESSING_DELAY)
     log.info("End of consumer thread")
 
 
-def get_window(total_data, window_start_step: int, window_stop_step: int, chunksize: int) -> np.ndarray:
-    start_index = window_start_step * chunksize
+def get_confirmed_potential_words(dupe_lists: list[tuple[list[int], list[int]]], word_lists: list[list[Word]]) -> Any:
+    index = len(word_lists) - 1
+    for dupe_list in reversed(dupe_lists):
+        list_amount_dupes, list_dupes_to = dupe_list
+        log.debug(f"List of duplicate amounts: {list_amount_dupes}")
+        log.debug(f"List mapping duplicates to words: {list_dupes_to}")
+        if len(list_amount_dupes) >= MIN_DUPE_BETWEEN_RECORDS_NEEDED:
+            min_index, min_value = get_index_dupes(list_amount_dupes, list_dupes_to)
+            log.debug(f"Minimum index: {min_index}")
+            log.debug(f"Minimum value: {min_value}")
+            return word_lists[index][:min_value + 1], word_lists[index][min_value:]
+        index -= 1
+    return None, None
+
+
+def get_printed_words(word_list: list[Word]) -> str:
+    word_str: str = ""
+    for word in word_list:
+        word_str += word.word
+    return word_str
+
+
+def get_index_dupes(dupes_list: list[int], index_list: list[int]) -> tuple[int, int]:
+    min_dupes: int = min(dupes_list)
+    index: int = len(index_list) - 1
+    for current_dupe in reversed(dupes_list):
+        if current_dupe == min_dupes:
+            break
+        index -= 1
+    return index, min_dupes
+
+
+def get_window(total_data, window_start_step: float, window_stop_step: int, chunksize: int) -> np.ndarray:
+    start_index = math.floor(window_start_step * chunksize)
     end_index = window_stop_step * chunksize
+    # difference must be a duplicate of 2
+    if (end_index - start_index) % 2 == 1:
+        start_index -= 1
     log.debug(f"Start index: {start_index}, End index: {end_index}")
     return (np.frombuffer(total_data[start_index:end_index], np.int16)
             .flatten()
@@ -111,9 +179,11 @@ def get_window(total_data, window_start_step: int, window_stop_step: int, chunks
 def transcribe_window(model: WhisperModel, np_data: np.ndarray, context: str) -> tuple[str, list]:
     segments, _ = model.transcribe(audio=np_data,
                                    language=LANGUAGE,
+                                   initial_prompt=context if context != "" else "",
                                    beam_size=5,
                                    without_timestamps=False,
                                    word_timestamps=True,
+
                                    vad_filter=True,
                                    vad_parameters=dict(min_silence_duration_ms=1000)
                                    )
@@ -125,51 +195,31 @@ def transcribe_window(model: WhisperModel, np_data: np.ndarray, context: str) ->
     return transcription, all_words
 
 
-# TODO word handling
-# a Word is (start: np.ndfloat64, end: np.ndfloat64, word: str (usually '<Space>word'), probability: np.ndfloat64)
-def compare_words(word_lists: list[Any]) -> tuple[float, list[Any], list[Any], list[Any]]:
-    return 0.0, [], [], word_lists
-
-
-def get_max_dupe(list_of_lists: list[list[Any]]) -> list[Any]:
+def get_max_dupe(list_of_lists: list[list[Word]]) -> list[list[int], list[int]]:
     """
-    Finds the maximum number of duplicate words between any two lists in a given list of lists.
-
-    Parameters:
-        list_of_lists (list[list[Any]]): A list containing sublists to be compared for duplicates.
-
-    Returns:
-        list[Any]: A list where each element is a tuple containing the maximum number of duplicate
-                  words and the index of the second sublist that had the most duplicates with the current sublist.
-                  If there are no duplicates, it returns 0 and -1 as the index.
-
-    Example:
-    >>> get_max_dupe([['a', 'b', 'c'], ['d', 'e', 'f'], ['m', 'n', 'o'], ['m', 'n', 'd']])
-    [(0, -1), (0, -1), (2, 3), (0, -1)]
     """
     max_dupes = []
     len_lists = len(list_of_lists)
     for i in range(len_lists):
-        current_max_dupe = 0
-        compared_to = -1
-        compared_words = []
+        current_dupe = []
+        compared_to = []
         for j in range(i + 1, len_lists):
             if j < len_lists:
                 amount_dupe, dupe_words = compare_lists_words(list_of_lists[i], list_of_lists[j])
-                compared_to = j if amount_dupe > current_max_dupe else compared_to
-                compared_words = dupe_words if amount_dupe > current_max_dupe else compared_words
-                current_max_dupe = amount_dupe if amount_dupe > current_max_dupe else current_max_dupe
+                if amount_dupe > MIN_DUPE_WORD_COUNT:
+                    compared_to.append(j)
+                    current_dupe.append(amount_dupe)
 
-        max_dupes.append((current_max_dupe, compared_to, compared_words))
+        max_dupes.append((current_dupe, compared_to))
     return max_dupes
 
 
-def compare_lists_words(list_a: list[Any], list_b: list[Any]) -> tuple[int, int, list[str]]:
+def compare_lists_words(list_a: list[Word], list_b: list[Word]) -> tuple[int, list[Word]]:
     min_len = min(len(list_a), len(list_b))
     duplicate = 0
     words = []
     for i in range(min_len):
-        if list_a[i].word == list_b[i].word:
+        if list_a[i].word.lower() == list_b[i].word.lower():
             duplicate += 1
             words.append(list_a[i].word)
         else:
@@ -181,19 +231,8 @@ def sounds(is_sound: bool):
     pass
 
 
-# the following is for OG OpenAi Whisper
-# wasn't able to get model.transcribe() working
-# so instead using whisper functions directly did work ... somehow
-# def transcribe_window(model: whisper.Whisper, np_data: np.ndarray, context: str) -> str:
-#     audio = whisper.pad_or_trim(np_data)
-#     mel = whisper.log_mel_spectrogram(audio, n_mels=128).to(model.device)
-#     options = whisper.DecodingOptions(language="de", beam_size=5, fp16=False)
-#     result = whisper.decode(model, mel, options)
-#     return result.text
-
-
 if __name__ == "__main__":
-    whisper = WhisperModel("small", device="cpu", compute_type="int8", download_root="./models")
+    whisper = WhisperModel("small", device="cuda", compute_type="float16", download_root="./models")
     # print(whisper.available_models())
     try:
         producer_thread = threading.Thread(target=producer, args=())
