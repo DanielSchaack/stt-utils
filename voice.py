@@ -14,6 +14,10 @@ import pyaudio
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
+fh = logging.FileHandler('app.log')
+fh.setLevel(logging.INFO)
+log.addHandler(fh)
+
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 16000
@@ -23,7 +27,7 @@ MAX_TIMESPAN = 10
 MIN_TIMESPAN_DONE = 5
 PROCESSING_DELAY = 0.1
 MIN_DUPE_WORD_COUNT = 2
-MIN_DUPE_BETWEEN_RECORDS_NEEDED = 2
+MIN_DUPE_BETWEEN_RECORDS_NEEDED = 3
 q = queue.Queue()
 is_recording = False
 
@@ -78,14 +82,18 @@ def consumer():
     word_lists = []
     do_run = True
     while do_run:
-        log.info(f"current confirmed transcription: {confirmed_transcribed}")
-        log.info(f"current potential transcription: {potential_transcribed}")
-        if window_stop_step - window_start_step > MIN_TIMESPAN_DONE and not transcribed.strip():
+        if window_stop_step - math.ceil(window_start_step) > MIN_TIMESPAN_DONE and not transcribed.strip():
             do_run = False
 
         if q.qsize() != 0:
             total_data += q.get()
             q.task_done()
+        else:
+            time.sleep(PROCESSING_DELAY)
+            continue
+
+        log.info(f"current confirmed transcription: {confirmed_transcribed}")
+        log.info(f"current potential transcription: {potential_transcribed}")
 
         available_chunks = len(total_data) // CHUNK
         log.info(f"Available chunks: {available_chunks}, current size: {len(total_data)}, current start step: {window_start_step}, current stop step: {window_stop_step}")
@@ -98,7 +106,7 @@ def consumer():
             if len(all_words) > 0:
                 word_lists.append(all_words)
 
-            if window_stop_step - window_start_step == MAX_TIMESPAN:
+            if window_stop_step - math.ceil(window_start_step) == MAX_TIMESPAN:
                 log.debug(f"Reached max timespan {MAX_TIMESPAN}, evaluating current words to move on")
             else:
                 window_stop_step += 1
@@ -106,11 +114,11 @@ def consumer():
         if len(word_lists) >= MIN_TIMESPAN_DONE:
             max_dupes = get_max_dupe(word_lists)
             log.debug(word_lists)
-            log.info(f"max dupes: {max_dupes}")
+            log.debug(f"max dupes: {max_dupes}")
 
             confirmed, potential = get_confirmed_potential_words(max_dupes, word_lists)
-            log.debug(f"confirmed words: {confirmed}")
-            log.debug(f"potential words: {potential}")
+            log.info(f"confirmed words: {confirmed}")
+            log.info(f"potential words: {potential}")
 
             if confirmed is None and potential is None:
                 continue
@@ -122,7 +130,7 @@ def consumer():
 
             last_confirmed_word = confirmed[-1]
             log.info(f"last confirmed word: {last_confirmed_word}")
-            window_start_step += last_confirmed_word.end
+            window_start_step += last_confirmed_word.end * 2  # due to chunks being half a second
             window_stop_step = math.ceil(window_start_step + 1)
             word_lists.clear()
 
@@ -175,16 +183,16 @@ def get_window(total_data, window_start_step: float, window_stop_step: int, chun
             )
 
 
-# a Word is (start: np.ndfloat64, end: np.ndfloat64, word: str (usually '<Space>word'), probability: np.ndfloat64)
-def transcribe_window(model: WhisperModel, np_data: np.ndarray, context: str) -> tuple[str, list]:
+def transcribe_window(model: WhisperModel, np_data: np.ndarray, context: str) -> tuple[str, list[Word]]:
     segments, _ = model.transcribe(audio=np_data,
                                    language=LANGUAGE,
                                    initial_prompt=context if context != "" else "",
                                    beam_size=5,
                                    without_timestamps=False,
                                    word_timestamps=True,
-
-                                   vad_filter=True,
+                                   condition_on_previous_text=False,
+                                   # vad_filter=True,
+                                   vad_filter=False,
                                    vad_parameters=dict(min_silence_duration_ms=1000)
                                    )
     all_words = []
@@ -233,6 +241,7 @@ def sounds(is_sound: bool):
 
 if __name__ == "__main__":
     whisper = WhisperModel("small", device="cuda", compute_type="float16", download_root="./models")
+    # whisper = WhisperModel("small", device="cpu", compute_type="int8", download_root="./models")
     # print(whisper.available_models())
     try:
         producer_thread = threading.Thread(target=producer, args=())
