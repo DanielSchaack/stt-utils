@@ -6,21 +6,19 @@ Speech to Clipboard
 - add a worker thread for stream processing
 - transfer chunks to worker thread
 - concatenate chunked data
+- use sliding window to transscribe word by word
+- (print continuous results to console)
+- add logic to identify recognized words by x repeats in sliding window
+- differentiate between recognized and potential words
 
 # To Do
-
 ## Must do
-- use sliding window to transscribe word by word
-    - (print continuous results to console)
 - add result to clipboard
 
-
 ## High
-- add logic to identify recognized words by x repeats in sliding window
 - find a way to toggle/ start-end recording
 
 ## Mid
-- differentiate between recognized and potential words
 - Add start and stop sound as feedback
     - Make it optional
 
