@@ -1,6 +1,20 @@
 # Speech-to-Clipboard
 Speech to Clipboard
 
+# Sounds
+- start_recording.wav 
+    - Percussive Alert 1_1 by Joao_Janz
+    - https://freesound.org/s/504782/
+    - License: Creative Commons 0
+- end_recording.wav
+    - Percussive Alert 1_2 by Joao_Janz
+    - https://freesound.org/s/504779/
+    - License: Creative Commons 0
+- end_processing.wav
+    - Percussive Notification 3_1 by Joao_Janz
+    - https://freesound.org/s/504789/
+    - License: Creative Commons 0
+
 # Done
 - start and send data to whisper
 - add a worker thread for stream processing
