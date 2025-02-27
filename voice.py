@@ -13,30 +13,26 @@ from enum import Enum
 
 from faster_whisper import WhisperModel
 import numpy as np
-import pyaudio
 import pyperclip
 import sounddevice as sd
 import soundfile as sf
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(filename="app.log", filemode="w", level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
-fh = logging.FileHandler('app.log')
-fh.setLevel(logging.INFO)
-log.addHandler(fh)
 
-RECORDING_FORMAT = pyaudio.paInt16
 RECORDING_CHANNELS = 1
 RECORDING_RATE = 16000
 RECORDING_CHUNK_SIZE = RECORDING_RATE
 RECORDING_DEBUG_OUTPUT = False
 
 TRANSCRIPTION_LANGUAGE = "de"
-TRANSCRIPTION_CHUNK_STEP_SIZE = 2
-TRANSCRIPTION_MAX_TIMESPAN = 20
+TRANSCRIPTION_CHUNK_STEP_SIZE = 1
+TRANSCRIPTION_MAX_TIMESPAN = 10
 TRANSCRIPTION_TO_CLIPBOARD = True
+TRANSCRIPTION_TO_CONSOLE = True
 
 PROCESSING_DELAY = 0.1
-PROCESSING_STOP_TIMESPAN_DONE = 6
+PROCESSING_STOP_TIMESPAN_DONE = 5
 PROCESSING_MIN_TIMESPAN_DONE = 2
 PROCESSING_MIN_DUPE_WORD_COUNT = 2
 PROCESSING_MIN_DUPE_BETWEEN_RECORDS_NEEDED = 2
@@ -49,8 +45,8 @@ SOUND_RELATIVE_VOLUME = 1.0
 SOUND_RELATIVE_SPEED = 2.0
 
 MODEL_NAME = "turbo"
-MODEL_DEVICE = "cuda"  # or cpu
-MODEL_COMPUTE_TYPE = "float16"   # or int8
+MODEL_DEVICE = "cuda"  # cuda or cpu
+MODEL_COMPUTE_TYPE = "int8"   # float16 or int8
 MODEL_DIR = "./models"
 
 q = queue.Queue()
@@ -72,10 +68,10 @@ class Word:
     word: str
 
 
-def callback_send_to_queue(in_data, frame_count, time_info, status):
-    log.debug(f"Received {len(in_data)} bytes of audio data")
-    q.put(in_data)
-    return (in_data, pyaudio.paContinue)
+def callback_send_to_queue(indata, frames, time, status):
+    log.debug(f"Received {len(indata)} bytes of audio data")
+    q.put(indata.copy())
+    return None
 
 
 def get_audio_window(total_data, window_start_step: float, window_stop_step: int, chunksize: int) -> np.ndarray:
@@ -135,7 +131,7 @@ def find_duplicate_words(list_of_lists: list[list[Word]]) -> list[tuple[list[int
                     current_dupe.append(amount_dupe)
 
         max_dupes.append((current_dupe, compared_to))
-    log.info(f"Calulated duplicate words: {max_dupes}")
+    log.debug(f"Calulated duplicate words: {max_dupes}")
     return max_dupes
 
 
@@ -152,7 +148,7 @@ def compare_word_lists(list_a: list[Word], list_b: list[Word]) -> tuple[int, lis
     for i in range(min_len):
         word_a = normalize_string(list_a[i].word)
         word_b = normalize_string(list_b[i].word)
-        log.info(f"Comparing {i}th word '{word_a}' with '{word_b}'")
+        log.debug(f"Comparing {i}th word '{word_a}' with '{word_b}'")
         if word_a == word_b:
             duplicate += 1
             words.append(list_a[i].word)
@@ -202,6 +198,11 @@ def to_clipboard(text: str):
         pyperclip.copy(text.strip())
 
 
+def to_console(text: str):
+    if TRANSCRIPTION_TO_CONSOLE:
+        print(text.strip())
+
+
 def play_sound(sound: SoundEvent):
     if sound == SoundEvent.RECORDING_START and SOUND_RECORDING_START_ACTIVE:
         file_path = sound_dir + "/start_recording.wav"
@@ -227,25 +228,25 @@ def play_sound(sound: SoundEvent):
 def producer():
     """Record audio and add it to the queue."""
     global is_recording
-    p = pyaudio.PyAudio()
+
     play_sound(SoundEvent.RECORDING_START)
     log.info("Starting audio recording...")
 
-    stream = p.open(format=RECORDING_FORMAT,
-                    channels=RECORDING_CHANNELS,
-                    rate=RECORDING_RATE,
-                    input=True,
-                    output=RECORDING_DEBUG_OUTPUT,
-                    frames_per_buffer=int(RECORDING_CHUNK_SIZE * 0.5),
-                    stream_callback=callback_send_to_queue)
+    stream = sd.InputStream(
+        samplerate=RECORDING_RATE,
+        blocksize=RECORDING_CHUNK_SIZE,
+        channels=RECORDING_CHANNELS,
+        dtype='int16',
+        callback=callback_send_to_queue
+    )
 
-    is_recording = True
-    while is_recording:
-        time.sleep(PROCESSING_DELAY)
+    with stream:
+        is_recording = True
+        while is_recording:
+            time.sleep(PROCESSING_DELAY)
+        stream.close()
 
     play_sound(SoundEvent.RECORDING_END)
-    stream.close()
-    p.terminate()
     log.info("End of producer thread")
 
 
@@ -253,7 +254,7 @@ def consumer():
     """Process audio data from the queue and transcribe it."""
     log.info("Consumer thread started")
 
-    total_data = b''
+    total_data = np.array([], dtype='int16')
     window_start_step = 0
     window_stop_step = TRANSCRIPTION_CHUNK_STEP_SIZE
     available_chunks = 0
@@ -268,7 +269,7 @@ def consumer():
             do_run = False
 
         if q.qsize() != 0:
-            total_data += q.get()
+            total_data = np.append(total_data, q.get())
             q.task_done()
         else:
             time.sleep(PROCESSING_DELAY)
@@ -281,7 +282,7 @@ def consumer():
         if window_stop_step <= available_chunks:
             np_data = get_audio_window(total_data, window_start_step, window_stop_step, RECORDING_CHUNK_SIZE)
             transcribed, all_words = transcribe_window(whisper, np_data, confirmed_transcribed)
-            log.info(f"From {window_start_step * 0.5:.2f} seconds to {window_stop_step * 0.5:.2f} seconds transcribed to: {transcribed}")
+            log.info(f"From {window_start_step:.2f} seconds to {window_stop_step:.2f} seconds transcribed to: {transcribed}")
 
             if len(all_words) > 0:
                 word_lists.append(all_words)
@@ -291,8 +292,7 @@ def consumer():
                 confirmed_transcribed += transcribed
                 transcribed = ""
                 last_confirmed_word = all_words[-1]
-
-                window_start_step += last_confirmed_word.end * 2
+                window_start_step += last_confirmed_word.end
                 window_stop_step = math.ceil(window_start_step + TRANSCRIPTION_CHUNK_STEP_SIZE)
                 word_lists.clear()
 
@@ -316,7 +316,7 @@ def consumer():
 
             # Update window position based on last confirmed word
             last_confirmed_word = confirmed[-1]
-            window_start_step += last_confirmed_word.end * 2
+            window_start_step += last_confirmed_word.end * 1
             window_stop_step = math.ceil(window_start_step + TRANSCRIPTION_CHUNK_STEP_SIZE)
             word_lists.clear()
 
@@ -325,6 +325,7 @@ def consumer():
 
     play_sound(SoundEvent.PROCESSING_END)
     to_clipboard(confirmed_transcribed)
+    to_console(confirmed_transcribed)
     log.info("End of consumer thread")
 
 

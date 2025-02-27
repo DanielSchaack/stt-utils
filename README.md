@@ -24,17 +24,17 @@ Speech to Clipboard
 - (print continuous results to console)
 - add logic to identify recognized words by x repeats in sliding window
 - differentiate between recognized and potential words
+- Add start and stop sound as feedback
+    - Make it optional
+    - add result to clipboard
 
 # To Do
 ## Must do
-- add result to clipboard
 
 ## High
 - find a way to toggle/ start-end recording
 
 ## Mid
-- Add start and stop sound as feedback
-    - Make it optional
 
 ## Optional - Frontend
 - When logic stands, add simple frontend to display recognized/potential words
