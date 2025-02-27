@@ -5,6 +5,8 @@ import logging
 import math
 import os
 import gc
+import unicodedata
+
 from typing import Optional
 from dataclasses import dataclass
 from enum import Enum
@@ -12,6 +14,9 @@ from enum import Enum
 from faster_whisper import WhisperModel
 import numpy as np
 import pyaudio
+import pyperclip
+import sounddevice as sd
+import soundfile as sf
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
@@ -23,18 +28,27 @@ RECORDING_FORMAT = pyaudio.paInt16
 RECORDING_CHANNELS = 1
 RECORDING_RATE = 16000
 RECORDING_CHUNK_SIZE = RECORDING_RATE
+RECORDING_DEBUG_OUTPUT = False
 
 TRANSCRIPTION_LANGUAGE = "de"
 TRANSCRIPTION_CHUNK_STEP_SIZE = 2
 TRANSCRIPTION_MAX_TIMESPAN = 20
+TRANSCRIPTION_TO_CLIPBOARD = True
 
 PROCESSING_DELAY = 0.1
 PROCESSING_STOP_TIMESPAN_DONE = 6
 PROCESSING_MIN_TIMESPAN_DONE = 2
 PROCESSING_MIN_DUPE_WORD_COUNT = 2
-PROCESSING_MIN_DUPE_BETWEEN_RECORDS_NEEDED = 3
+PROCESSING_MIN_DUPE_BETWEEN_RECORDS_NEEDED = 2
 
-MODEL_NAME = "small"
+SOUND_RECORDING_START_ACTIVE = True
+SOUND_RECORDING_END_ACTIVE = True
+SOUND_PROCESSING_END_ACTIVE = True
+SOUND_RELATIVE_LENGTH = 1.0
+SOUND_RELATIVE_VOLUME = 1.0
+SOUND_RELATIVE_SPEED = 2.0
+
+MODEL_NAME = "turbo"
 MODEL_DEVICE = "cuda"  # or cpu
 MODEL_COMPUTE_TYPE = "float16"   # or int8
 MODEL_DIR = "./models"
@@ -121,7 +135,12 @@ def find_duplicate_words(list_of_lists: list[list[Word]]) -> list[tuple[list[int
                     current_dupe.append(amount_dupe)
 
         max_dupes.append((current_dupe, compared_to))
+    log.info(f"Calulated duplicate words: {max_dupes}")
     return max_dupes
+
+
+def normalize_string(s):
+    return unicodedata.normalize('NFC', s.strip()).casefold()
 
 
 def compare_word_lists(list_a: list[Word], list_b: list[Word]) -> tuple[int, list[str]]:
@@ -131,7 +150,10 @@ def compare_word_lists(list_a: list[Word], list_b: list[Word]) -> tuple[int, lis
     words = []
 
     for i in range(min_len):
-        if list_a[i].word == list_b[i].word:
+        word_a = normalize_string(list_a[i].word)
+        word_b = normalize_string(list_b[i].word)
+        log.info(f"Comparing {i}th word '{word_a}' with '{word_b}'")
+        if word_a == word_b:
             duplicate += 1
             words.append(list_a[i].word)
         else:
@@ -175,10 +197,31 @@ def join_words(word_list: list[Word]) -> str:
     return "".join(word.word for word in word_list)
 
 
-# TODO
-def play_sound(event: SoundEvent):
-    """Play a sound for the specified event."""
-    pass
+def to_clipboard(text: str):
+    if TRANSCRIPTION_TO_CLIPBOARD:
+        pyperclip.copy(text.strip())
+
+
+def play_sound(sound: SoundEvent):
+    if sound == SoundEvent.RECORDING_START and SOUND_RECORDING_START_ACTIVE:
+        file_path = sound_dir + "/start_recording.wav"
+    elif sound == SoundEvent.RECORDING_END and SOUND_RECORDING_END_ACTIVE:
+        file_path = sound_dir + "/end_recording.wav"
+    elif sound == SoundEvent.PROCESSING_END and SOUND_PROCESSING_END_ACTIVE:
+        file_path = sound_dir + "/end_processing.wav"
+    else:
+        return
+
+    try:
+        data, samplerate = sf.read(file_path, dtype='float32')
+        audiolength = math.ceil(len(data) * SOUND_RELATIVE_LENGTH)
+        audio = data[:audiolength - 1]
+        audio *= SOUND_RELATIVE_VOLUME
+        samplerate *= SOUND_RELATIVE_SPEED
+        sd.play(audio, samplerate)
+        sd.wait()
+    except Exception as e:
+        log.error(e)
 
 
 def producer():
@@ -192,7 +235,7 @@ def producer():
                     channels=RECORDING_CHANNELS,
                     rate=RECORDING_RATE,
                     input=True,
-                    output=True,
+                    output=RECORDING_DEBUG_OUTPUT,
                     frames_per_buffer=int(RECORDING_CHUNK_SIZE * 0.5),
                     stream_callback=callback_send_to_queue)
 
@@ -243,11 +286,17 @@ def consumer():
             if len(all_words) > 0:
                 word_lists.append(all_words)
 
-            # TODO fix weird additions to confirmed_transcribed
             if window_stop_step - math.ceil(window_start_step) >= TRANSCRIPTION_MAX_TIMESPAN:
                 log.info(f"Reached max timespan {TRANSCRIPTION_MAX_TIMESPAN}, evaluating current words to move on")
                 confirmed_transcribed += transcribed
                 transcribed = ""
+                last_confirmed_word = all_words[-1]
+
+                window_start_step += last_confirmed_word.end * 2
+                window_stop_step = math.ceil(window_start_step + TRANSCRIPTION_CHUNK_STEP_SIZE)
+                word_lists.clear()
+
+                continue
             else:
                 window_stop_step += TRANSCRIPTION_CHUNK_STEP_SIZE
 
@@ -259,20 +308,23 @@ def consumer():
             max_dupes = find_duplicate_words(word_lists)
             confirmed, potential = get_confirmed_potential_words(max_dupes, word_lists)
 
-            if confirmed and potential:
-                confirmed_transcribed += join_words(confirmed)
-                transcribed = join_words(potential)
+            if confirmed is None and potential is None:
+                continue
 
-                # Update window position based on last confirmed word
-                last_confirmed_word = confirmed[-1]
-                window_start_step += last_confirmed_word.end * 2
-                window_stop_step = math.ceil(window_start_step + TRANSCRIPTION_CHUNK_STEP_SIZE)
-                word_lists.clear()
+            confirmed_transcribed += join_words(confirmed)
+            transcribed = join_words(potential)
+
+            # Update window position based on last confirmed word
+            last_confirmed_word = confirmed[-1]
+            window_start_step += last_confirmed_word.end * 2
+            window_stop_step = math.ceil(window_start_step + TRANSCRIPTION_CHUNK_STEP_SIZE)
+            word_lists.clear()
 
         log.info(f"Confirmed: {confirmed_transcribed} | Potential: {transcribed}")
         time.sleep(PROCESSING_DELAY)
 
     play_sound(SoundEvent.PROCESSING_END)
+    to_clipboard(confirmed_transcribed)
     log.info("End of consumer thread")
 
 
