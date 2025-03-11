@@ -24,7 +24,6 @@ log = logging.getLogger(__name__)
 RECORDING_CHANNELS = 1
 RECORDING_RATE = 16000
 RECORDING_CHUNK_SIZE = RECORDING_RATE
-RECORDING_DEBUG_OUTPUT = False
 
 TRANSCRIPTION_LANGUAGE = "de"
 TRANSCRIPTION_CHUNK_STEP_SIZE = 1
@@ -54,8 +53,8 @@ MODEL_DIR = "./models"
 q = queue.Queue()
 sound_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sounds")
 recording_logic_thread = None
-is_hotkey_pressed_flag = False
-is_recording = False
+global_is_hotkey_pressed_flag = False
+global_is_recording_flag = False
 required_keys = {keyboard.Key.alt, keyboard.KeyCode.from_char('r'.lower())}
 ending_keys = {keyboard.Key.ctrl, keyboard.Key.esc}
 pressed_keys = set()
@@ -211,11 +210,7 @@ def to_terminal(text: str):
     if TRANSCRIPTION_TO_TERMINAL:
         text_to_terminal = text.strip()
         log.info(f"Printing to stdout: '{text_to_terminal}'")
-        stdout_lock = threading.Lock()
-        with stdout_lock:
-            print(text_to_terminal, flush=True)
-            # sys.stdout.write(text_to_terminal)
-            # sys.stdout.flush()
+        print(text_to_terminal)
 
 
 def play_sound_async(sound: SoundEvent):
@@ -252,12 +247,12 @@ def play_sound(sound: SoundEvent):
 
 def producer():
     """Record audio and add it to the queue."""
-    global is_hotkey_pressed_flag, is_recording
+    global global_is_hotkey_pressed_flag, global_is_recording_flag
     amount_wait_intervals = 0
 
     play_sound_async(SoundEvent.RECORDING_START)
     log.info("Starting audio recording...")
-    is_recording = True
+    global_is_recording_flag = True
 
     stream = sd.InputStream(
         samplerate=RECORDING_RATE,
@@ -270,7 +265,7 @@ def producer():
 
     with stream:
         log.info("Start of recording stream")
-        while is_hotkey_pressed_flag:
+        while global_is_hotkey_pressed_flag:
             amount_wait_intervals += 1
             time.sleep(PROCESSING_DELAY)
         log.info("End of recording stream")
@@ -279,7 +274,7 @@ def producer():
     intervals_to_wait = PROCESSING_DELAYS_PER_SECOND - current_wait_interval + 1
     log.debug(f"Sleeping {intervals_to_wait} until next full chunk before setting end_of_processing flag")
     time.sleep(PROCESSING_DELAY * intervals_to_wait)
-    is_recording = False
+    global_is_recording_flag = False
 
     play_sound_async(SoundEvent.RECORDING_END)
     log.info("End of producer thread")
@@ -290,8 +285,8 @@ def consumer(whisper: WhisperModel):
     log.info("Consumer thread started")
 
     # Wait until recordings are available
-    global is_recording
-    if not is_recording:
+    global global_is_recording_flag
+    if not global_is_recording_flag:
         time.sleep(PROCESSING_DELAY)
     log.info("Recording is active, consumer thread logic starting now")
 
@@ -312,7 +307,7 @@ def consumer(whisper: WhisperModel):
             q.task_done()
         else:
             log.debug("Not appending data")
-            if not is_recording and window_stop_step > available_chunks:
+            if not global_is_recording_flag and window_stop_step > available_chunks:
                 do_run = False
                 last_run = True
                 log.info("Stopping processing")
@@ -397,11 +392,11 @@ def main_logic():
 
 
 def update_multi_key_status():
-    global is_hotkey_pressed_flag
+    global global_is_hotkey_pressed_flag
     global recording_logic_thread
     if required_keys.issubset(pressed_keys):
         if recording_logic_thread is None:
-            is_hotkey_pressed_flag = True
+            global_is_hotkey_pressed_flag = True
             try:
                 recording_logic_thread = threading.Thread(target=main_logic, args=())
                 recording_logic_thread.start()
@@ -411,7 +406,7 @@ def update_multi_key_status():
             log.debug("Still recording")
         log.debug("Is recording")
     else:
-        is_hotkey_pressed_flag = False
+        global_is_hotkey_pressed_flag = False
         log.debug("Is not recording")
 
 
