@@ -16,6 +16,7 @@ import numpy as np
 import pyperclip
 import sounddevice as sd
 import soundfile as sf
+from pynput import keyboard
 
 logging.basicConfig(filename="app.log", filemode="w", level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
@@ -28,10 +29,11 @@ RECORDING_DEBUG_OUTPUT = False
 TRANSCRIPTION_LANGUAGE = "de"
 TRANSCRIPTION_CHUNK_STEP_SIZE = 1
 TRANSCRIPTION_MAX_TIMESPAN = 10
-TRANSCRIPTION_TO_CLIPBOARD = True
-TRANSCRIPTION_TO_CONSOLE = True
+TRANSCRIPTION_TO_CLIPBOARD = False
+TRANSCRIPTION_TO_TERMINAL = True
 
 PROCESSING_DELAY = 0.1
+PROCESSING_DELAYS_PER_SECOND = 1.0 / PROCESSING_DELAY
 PROCESSING_STOP_TIMESPAN_DONE = 5
 PROCESSING_MIN_TIMESPAN_DONE = 2
 PROCESSING_MIN_DUPE_WORD_COUNT = 2
@@ -46,12 +48,17 @@ SOUND_RELATIVE_SPEED = 2.0
 
 MODEL_NAME = "turbo"
 MODEL_DEVICE = "cuda"  # cuda or cpu
-MODEL_COMPUTE_TYPE = "int8"   # float16 or int8
+MODEL_COMPUTE_TYPE = "float16"   # float16 or int8
 MODEL_DIR = "./models"
 
 q = queue.Queue()
 sound_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sounds")
+recording_logic_thread = None
+is_hotkey_pressed_flag = False
 is_recording = False
+required_keys = {keyboard.Key.alt, keyboard.KeyCode.from_char('r'.lower())}
+ending_keys = {keyboard.Key.ctrl, keyboard.Key.esc}
+pressed_keys = set()
 
 
 class SoundEvent(Enum):
@@ -69,21 +76,21 @@ class Word:
 
 
 def callback_send_to_queue(indata, frames, time, status):
-    log.debug(f"Received {len(indata)} bytes of audio data")
+    log.info(f"Received {len(indata)} bytes of audio data")
     q.put(indata.copy())
     return None
 
 
-def get_audio_window(total_data, window_start_step: float, window_stop_step: int, chunksize: int) -> np.ndarray:
+def get_audio_window(total_data, window_start_step: float, window_stop_step: float, chunksize: int) -> np.ndarray:
     """Extract a window of audio data and convert to numpy array."""
     start_index = math.floor(window_start_step * chunksize)
-    end_index = window_stop_step * chunksize
+    end_index = int(window_stop_step * chunksize)
 
     # Due to required int16, ensure difference is a multiple of 2
     if (end_index - start_index) % 2 == 1:
         start_index -= 1
 
-    log.debug(f"Start index: {start_index}, End index: {end_index}")
+    log.info(f"Start index: {start_index}, End index: {end_index}")
     return (np.frombuffer(total_data[start_index:end_index], np.int16)
             .flatten()
             .astype(np.float32) / 32768.0
@@ -195,15 +202,30 @@ def join_words(word_list: list[Word]) -> str:
 
 def to_clipboard(text: str):
     if TRANSCRIPTION_TO_CLIPBOARD:
-        pyperclip.copy(text.strip())
+        text_to_clipboard = text.strip()
+        log.info(f"Adding to clipboard: '{text_to_clipboard}'")
+        pyperclip.copy(text_to_clipboard)
 
 
-def to_console(text: str):
-    if TRANSCRIPTION_TO_CONSOLE:
-        print(text.strip())
+def to_terminal(text: str):
+    if TRANSCRIPTION_TO_TERMINAL:
+        text_to_terminal = text.strip()
+        log.info(f"Printing to stdout: '{text_to_terminal}'")
+        stdout_lock = threading.Lock()
+        with stdout_lock:
+            print(text_to_terminal, flush=True)
+            # sys.stdout.write(text_to_terminal)
+            # sys.stdout.flush()
+
+
+def play_sound_async(sound: SoundEvent):
+    log.debug(f"Playing sound {sound} asynchrounously")
+    sound_thread = threading.Thread(target=play_sound, args=(sound,))
+    sound_thread.start()
 
 
 def play_sound(sound: SoundEvent):
+    log.debug(f"Playing sound {sound}")
     if sound == SoundEvent.RECORDING_START and SOUND_RECORDING_START_ACTIVE:
         file_path = sound_dir + "/start_recording.wav"
     elif sound == SoundEvent.RECORDING_END and SOUND_RECORDING_END_ACTIVE:
@@ -213,46 +235,65 @@ def play_sound(sound: SoundEvent):
     else:
         return
 
+    log.info(f"Playing sound {file_path}")
     try:
-        data, samplerate = sf.read(file_path, dtype='float32')
+        data, samplerate = sf.read(file_path, dtype='float32', always_2d=True)
         audiolength = math.ceil(len(data) * SOUND_RELATIVE_LENGTH)
         audio = data[:audiolength - 1]
         audio *= SOUND_RELATIVE_VOLUME
         samplerate *= SOUND_RELATIVE_SPEED
-        sd.play(audio, samplerate)
-        sd.wait()
+
+        stream = sd.OutputStream(samplerate=samplerate, channels=audio.shape[1])
+        with stream:
+            stream.write(audio)
     except Exception as e:
         log.error(e)
 
 
 def producer():
     """Record audio and add it to the queue."""
-    global is_recording
+    global is_hotkey_pressed_flag, is_recording
+    amount_wait_intervals = 0
 
-    play_sound(SoundEvent.RECORDING_START)
+    play_sound_async(SoundEvent.RECORDING_START)
     log.info("Starting audio recording...")
+    is_recording = True
 
     stream = sd.InputStream(
         samplerate=RECORDING_RATE,
         blocksize=RECORDING_CHUNK_SIZE,
         channels=RECORDING_CHANNELS,
         dtype='int16',
-        callback=callback_send_to_queue
+        callback=callback_send_to_queue,
+        clip_off=True
     )
 
     with stream:
-        is_recording = True
-        while is_recording:
+        log.info("Start of recording stream")
+        while is_hotkey_pressed_flag:
+            amount_wait_intervals += 1
             time.sleep(PROCESSING_DELAY)
-        stream.close()
+        log.info("End of recording stream")
 
-    play_sound(SoundEvent.RECORDING_END)
+    current_wait_interval = amount_wait_intervals % PROCESSING_DELAYS_PER_SECOND
+    intervals_to_wait = PROCESSING_DELAYS_PER_SECOND - current_wait_interval + 1
+    log.debug(f"Sleeping {intervals_to_wait} until next full chunk before setting end_of_processing flag")
+    time.sleep(PROCESSING_DELAY * intervals_to_wait)
+    is_recording = False
+
+    play_sound_async(SoundEvent.RECORDING_END)
     log.info("End of producer thread")
 
 
-def consumer():
+def consumer(whisper: WhisperModel):
     """Process audio data from the queue and transcribe it."""
     log.info("Consumer thread started")
+
+    # Wait until recordings are available
+    global is_recording
+    if not is_recording:
+        time.sleep(PROCESSING_DELAY)
+    log.info("Recording is active, consumer thread logic starting now")
 
     total_data = np.array([], dtype='int16')
     window_start_step = 0
@@ -262,25 +303,32 @@ def consumer():
     confirmed_transcribed = ""
     word_lists = []
     do_run = True
+    last_run = False
 
     while do_run:
-        if window_stop_step - math.ceil(window_start_step) > PROCESSING_STOP_TIMESPAN_DONE and not transcribed.strip():
-            log.info(f"Confirmed: {confirmed_transcribed} | Potential: {transcribed}")
-            do_run = False
-
         if q.qsize() != 0:
+            log.info("Appending to total data")
             total_data = np.append(total_data, q.get())
             q.task_done()
         else:
-            time.sleep(PROCESSING_DELAY)
-            continue
+            log.debug("Not appending data")
+            if not is_recording and window_stop_step > available_chunks:
+                do_run = False
+                last_run = True
+                log.info("Stopping processing")
 
         available_chunks = len(total_data) // RECORDING_CHUNK_SIZE
         log.debug(f"Available chunks: {available_chunks}, current size: {len(total_data)}, current start step: {window_start_step}, current stop step: {window_stop_step}")
 
         # Process available audio data
         if window_stop_step <= available_chunks:
-            np_data = get_audio_window(total_data, window_start_step, window_stop_step, RECORDING_CHUNK_SIZE)
+            if last_run:
+                window_stop_step = len(total_data) / RECORDING_CHUNK_SIZE
+                log.info(f"Last run from {window_start_step} till {window_stop_step}")
+                np_data = get_audio_window(total_data, window_start_step, window_stop_step, RECORDING_CHUNK_SIZE)
+            else:
+                log.info(f"Last run from {window_start_step} till {window_stop_step}")
+                np_data = get_audio_window(total_data, window_start_step, window_stop_step, RECORDING_CHUNK_SIZE)
             transcribed, all_words = transcribe_window(whisper, np_data, confirmed_transcribed)
             log.info(f"From {window_start_step:.2f} seconds to {window_stop_step:.2f} seconds transcribed to: {transcribed}")
 
@@ -295,12 +343,12 @@ def consumer():
                 window_start_step += last_confirmed_word.end
                 window_stop_step = math.ceil(window_start_step + TRANSCRIPTION_CHUNK_STEP_SIZE)
                 word_lists.clear()
-
                 continue
             else:
                 window_stop_step += TRANSCRIPTION_CHUNK_STEP_SIZE
 
         else:
+            time.sleep(PROCESSING_DELAY)
             continue
 
         # Processing accumulated word lists
@@ -323,28 +371,67 @@ def consumer():
         log.info(f"Confirmed: {confirmed_transcribed} | Potential: {transcribed}")
         time.sleep(PROCESSING_DELAY)
 
-    play_sound(SoundEvent.PROCESSING_END)
-    to_clipboard(confirmed_transcribed)
-    to_console(confirmed_transcribed)
+    play_sound_async(SoundEvent.PROCESSING_END)
+    to_clipboard(confirmed_transcribed + transcribed)
+    to_terminal(confirmed_transcribed + transcribed)
     log.info("End of consumer thread")
 
 
-if __name__ == "__main__":
+def main_logic():
+    log.info("Starting transcription logic")
     whisper = WhisperModel(MODEL_NAME, device=MODEL_DEVICE, compute_type=MODEL_COMPUTE_TYPE, download_root=MODEL_DIR)
+    log.info("Whisper model loaded")
     try:
         producer_thread = threading.Thread(target=producer, args=())
         producer_thread.start()
 
-        consumer_thread = threading.Thread(target=consumer, args=())
+        consumer_thread = threading.Thread(target=consumer, args=(whisper,))
         consumer_thread.start()
 
         consumer_thread.join()
-
-        is_recording = False
-        producer_thread.join()
-
     except Exception as e:
         log.error(f"Error in processing: {e}")
     finally:
+        del whisper
         gc.collect()
 
+
+def update_multi_key_status():
+    global is_hotkey_pressed_flag
+    global recording_logic_thread
+    if required_keys.issubset(pressed_keys):
+        if recording_logic_thread is None:
+            is_hotkey_pressed_flag = True
+            try:
+                recording_logic_thread = threading.Thread(target=main_logic, args=())
+                recording_logic_thread.start()
+            finally:
+                recording_logic_thread = None
+        else:
+            log.debug("Still recording")
+        log.debug("Is recording")
+    else:
+        is_hotkey_pressed_flag = False
+        log.debug("Is not recording")
+
+
+def on_press(key):
+    if not pressed_keys.__contains__(key):
+        pressed_keys.add(key)
+        update_multi_key_status()
+
+
+def on_release(key):
+    if ending_keys.issubset(pressed_keys):
+        return False
+    pressed_keys.discard(key)
+    update_multi_key_status()
+
+
+if __name__ == "__main__":
+    try:
+        with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
+            listener.join()
+    except Exception as e:
+        log.error(e)
+    play_sound_async(SoundEvent.PROCESSING_END)
