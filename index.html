@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>SSE Example</title>
+    </head>
+    <body>
+        <h1>SSE Example</h1>
+        <div id="output"></div>
+
+        <script>
+            const output = document.getElementById('output');
+            const eventSource = new EventSource('/events');
+
+            eventSource.onmessage = function(event) {
+                console.log("Empfangen:", event.data);
+                output.innerHTML += event.data;
+            };
+
+            eventSource.onopen = function() {
+                console.log("Event Source opened");
+            };
+
+            eventSource.onerror = function(error) {
+                // console.error("Event Source error:", error);
+                // output.innerHTML += "<p>Error: " + error + "</p>";
+            };
+        </script>
+    </body>
+</html>

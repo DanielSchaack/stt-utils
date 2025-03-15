@@ -1,0 +1,35 @@
+transcription:
+  language: "de"
+  nudge_into_punctuation: "Transkription mit Fokus auf Groß- und Kleinschreibung sowie Satzzeichen."
+  chunk_step_size: 1
+  max_timespan: 10
+  to_clipboard: True
+  to_terminal: True
+  terminal_share_progress: False
+  separation_confirmed_potential: ""
+  terminal_share_eos: False
+  terminal_eos: ">><<"
+  terminal_eot: "<><>"
+recording:
+  channels: 1
+  rate: 16000
+  chunk_size: 16000
+processing:
+  delay: 0.1
+  delays_per_second: 10.0
+  stop_timespan_done: 5
+  min_timespan_done: 2
+  min_dupe_word_count: 2
+  min_dupe_between_records_needed: 2
+sound:
+  recording_start_active: True
+  recording_end_active: True
+  processing_end_active: True
+  relative_length: 1.0
+  relative_volume: 1.0
+  relative_speed: 2.0
+model:
+  name: "turbo"
+  device: "cuda"
+  compute_type: "float16"
+  dir: "./models"
