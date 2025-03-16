@@ -42,6 +42,13 @@ class Transcriptor():
         self.audio_queue = queue.Queue()
         self.is_hotkey_pressed_flag = False
         self.is_recording_flag = False
+        self.confirmed = ""
+        self.potential = ""
+        self.eot = False
+        self.eos = False
+
+    def update_config(self, config: AppConfig):
+        self.config = config
 
     def callback_send_to_queue(self, indata, frames, time, status):
         self.log.info(f"Received {len(indata)} bytes of audio data")
@@ -242,6 +249,7 @@ class Transcriptor():
         if not self.is_recording_flag:
             time.sleep(self.config.processing.delay)
         self.log.info("Recording is active, consumer thread logic starting now")
+        self.eot = False
 
         total_data = np.array([], dtype='int16')
         window_start_step = 0
@@ -315,7 +323,10 @@ class Transcriptor():
                 window_start_step += last_confirmed_word.end * 1
                 window_stop_step = math.ceil(window_start_step + self.config.transcription.chunk_step_size)
                 word_lists.clear()
-                self.to_terminal(confirmed_transcribed + self.config.transcription.separation_confirmed_potential + transcribed)
+                if self.config.transcription.terminal_share_progress:
+                    self.confirmed = confirmed_transcribed
+                    self.potential = transcribed
+                    self.to_terminal(confirmed_transcribed + self.config.transcription.separation_confirmed_potential + transcribed)
 
             self.log.info(f"Confirmed: {confirmed_transcribed} | Potential: {transcribed}")
             time.sleep(self.config.processing.delay)
@@ -323,6 +334,9 @@ class Transcriptor():
         self.play_sound_async(SoundEvent.PROCESSING_END)
         self.to_clipboard(confirmed_transcribed + self.config.transcription.separation_confirmed_potential + transcribed)
         self.to_terminal(confirmed_transcribed + self.config.transcription.separation_confirmed_potential + transcribed)
+        self.confirmed = confirmed_transcribed
+        self.potential = transcribed
+        self.eot = True
         if self.config.transcription.terminal_share_progress:
             self.to_terminal(self.config.transcription.terminal_eot)
         self.log.info("End of consumer thread")

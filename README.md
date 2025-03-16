@@ -74,6 +74,8 @@ speech-to-clipboard &
     - Might be worth it to investigate managing outside of said thread to handle something like configurable uptime after usage for no constant reloading
 - Added hint for punctuation, currently for personal main use in german
     - This should result in more output with actual punctuation and capitalisation. These were quite often missing in daily use.
+- Configuration without adjusting code 
+    - Config file
 
 ## To Do
 ### Optional - Frontend
@@ -85,7 +87,6 @@ speech-to-clipboard &
 - Manage model outside of main thread to handle something like configurable uptime after usage for no constant reloading
 - Sound files are loaded on each use - add buffer after first read
 - Configuration without adjusting code 
-    - Config file
     - If frontend available - config editor
 
 # Credits for Sounds
@@ -101,16 +102,4 @@ speech-to-clipboard &
     - Percussive Notification 3_1 by Joao_Janz
     - https://freesound.org/s/504789/
     - License: Creative Commons 0
-
-### After being done with all
-- Add decent description to README.md
-    1. Description
-    2. Features
-    3. Installation
-        - Provide requirements.txt
-        - Installation steps i.e. how to setup on Linux
-    4. Configuration
-    5. License
-- Think about OSS this little hacked together thingy
-    - Contributions?
 

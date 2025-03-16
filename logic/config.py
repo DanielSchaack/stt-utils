@@ -54,12 +54,18 @@ class ModelConfig:
 
 
 @dataclass
+class UiConfig:
+    enabled: bool
+
+
+@dataclass
 class AppConfig:
     transcription: TranscriptionConfig
     recording: RecordingConfig
     processing: ProcessingConfig
     sound: SoundConfig
     model: ModelConfig
+    ui: UiConfig
 
 
 def load_config_from_yaml(filename: str) -> AppConfig:
@@ -81,13 +87,17 @@ def load_config_from_yaml(filename: str) -> AppConfig:
     model_config = ModelConfig(
         **config_data['model']
     )
+    ui_config = UiConfig(
+        **config_data['ui']
+    )
 
     app_config = AppConfig(
         transcription=transcription_config,
         recording=recording_config,
         processing=processing_config,
         sound=sound_config,
-        model=model_config
+        model=model_config,
+        ui=ui_config
     )
 
     return app_config
@@ -140,6 +150,10 @@ def load_default_config() -> AppConfig:
             device="cuda",
             compute_type="float16",
             dir="./models"
+        ),
+
+        ui=UiConfig(
+            enabled=True
         )
     )
 

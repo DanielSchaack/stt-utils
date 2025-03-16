@@ -13,7 +13,7 @@
 
             eventSource.onmessage = function(event) {
                 console.log("Empfangen:", event.data);
-                output.innerHTML += event.data;
+                output.innerHTML += "<p>" + event.data + "</p>";
             };
 
             eventSource.onopen = function() {

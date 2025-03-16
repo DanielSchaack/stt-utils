@@ -5,7 +5,7 @@ transcription:
   max_timespan: 10
   to_clipboard: True
   to_terminal: True
-  terminal_share_progress: False
+  terminal_share_progress: True
   separation_confirmed_potential: ""
   terminal_share_eos: False
   terminal_eos: ">><<"
@@ -33,3 +33,5 @@ model:
   device: "cuda"
   compute_type: "float16"
   dir: "./models"
+ui:
+  enabled: True
