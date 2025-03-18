@@ -72,6 +72,8 @@ speech-to-clipboard &
     - Currently bound to lifetime of main logic thread
         - Constant Un-/Loading on each use
     - Might be worth it to investigate managing outside of said thread to handle something like configurable uptime after usage for no constant reloading
+    - Manage model outside of main thread to handle something like configurable uptime after usage for no constant reloading
+    - Added a timer that unloads using a Timer that restarts on use
 - Added hint for punctuation, currently for personal main use in german
     - This should result in more output with actual punctuation and capitalisation. These were quite often missing in daily use.
 - Configuration without adjusting code 
@@ -84,7 +86,6 @@ speech-to-clipboard &
 ### Optional - Optimizations
 - Maybe readjust ending condition of consumer thread
     - From Ending with last chunk into processing until done or threshold is met
-- Manage model outside of main thread to handle something like configurable uptime after usage for no constant reloading
 - Sound files are loaded on each use - add buffer after first read
 - Configuration without adjusting code 
     - If frontend available - config editor

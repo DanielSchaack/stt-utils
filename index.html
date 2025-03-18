@@ -1,29 +1,79 @@
 <!DOCTYPE html>
 <html>
-    <head>
-        <title>SSE Example</title>
-    </head>
-    <body>
-        <h1>SSE Example</h1>
-        <div id="output"></div>
+  <head>
+    <meta charset="UTF-8">
+    <!--<meta http-equiv="refresh" content="5">-->
+    <title>Transcription Results</title>
+    <style>
+      .window {
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                height: 100vh;
+                text-align: center;
+            }
+        .confirmed {
+            color: black;
+        }
 
-        <script>
-            const output = document.getElementById('output');
-            const eventSource = new EventSource('/events');
+        .potential {
+            color: grey;
+        }
+        #copyButton {
+            align-content: center
+        }
 
-            eventSource.onmessage = function(event) {
-                console.log("Empfangen:", event.data);
-                output.innerHTML += "<p>" + event.data + "</p>";
-            };
+        h1 {
+            color: black;
+            font-size: 2em;
+            margin-top: 20px;
+            text-align: center;
+        }
+    </style>
+  </head>
+  <body>
+    <h1>Transcription Results</h1>
+    <div id="container">
+      <div class="transcript">
+        <span class="confirmed">Bisher wurde noch nicht geschrieben</span>
+        <span class="potential"></span>
+      </div>
+    </div>
+    <button id="copyButton">Copy</button>
+    <script>
+        const transcriptions = document.getElementById('container');
+        const eventSource = new EventSource('/events');
 
-            eventSource.onopen = function() {
-                console.log("Event Source opened");
-            };
+        eventSource.onmessage = function(event) {
+            console.log("Empfangen:", event.data);
+            const messageJson = JSON.parse(event.data)
+            const transcripts = transcriptions.getElementsByClassName('transcript');
+            if (transcripts.length > 0){
+                const lastTranscript = transcripts[transcripts.length - 1];
+                const confirmedSpan = lastTranscript.getElementsByClassName("confirmed")[0];
+                confirmedSpan.textContent = messageJson.confirmed
+                const potentialSpan = lastTranscript.getElementsByClassName("potential")[0];
+                potentialSpan.textContent = messageJson.potential
+            }
 
-            eventSource.onerror = function(error) {
-                // console.error("Event Source error:", error);
-                // output.innerHTML += "<p>Error: " + error + "</p>";
-            };
-        </script>
-    </body>
+            if (messageJson.eot === "True"){
+                let newTranscription = "<div class=\"transcript\">"
+                newTranscription += "<span class=\"confirmed\"></span>"
+                newTranscription += "<span class=\"potential\"></span>"
+                newTranscription += "</div>"
+                transcriptions.innerHTML += newTranscription
+            }
+
+        };
+
+        eventSource.onopen = function() {
+            console.log("Event Source opened");
+        };
+
+        eventSource.onerror = function(error) {
+            // console.error("Event Source error:", error);
+            // transcriptions.innerHTML += "<p>Error: " + error + "</p>";
+        };
+    </script>
+  </body>
 </html>

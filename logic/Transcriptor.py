@@ -46,6 +46,8 @@ class Transcriptor():
         self.potential = ""
         self.eot = False
         self.eos = False
+        self.whisper = None
+        self.unload_timer = None
 
     def update_config(self, config: AppConfig):
         self.config = config
@@ -70,18 +72,18 @@ class Transcriptor():
                 .astype(np.float32) / 32768.0
                 )
 
-    def transcribe_window(self, model: WhisperModel, np_data: np.ndarray, context: str) -> tuple[str, list[Word]]:
+    def transcribe_window(self, np_data: np.ndarray, context: str) -> tuple[str, list[Word]]:
         """Transcribe audio data using the Whisper model."""
-        segments, _ = model.transcribe(audio=np_data,
-                                       language=self.config.transcription.language,
-                                       initial_prompt=self.config.transcription.nudge_into_punctuation + context if context != "" else self.config.transcription.nudge_into_punctuation,
-                                       beam_size=5,
-                                       without_timestamps=False,
-                                       word_timestamps=True,
-                                       condition_on_previous_text=False,
-                                       vad_filter=True,
-                                       vad_parameters=dict(min_silence_duration_ms=1000)
-                                       )
+        segments, _ = self.whisper.transcribe(audio=np_data,
+                                              language=self.config.transcription.language,
+                                              initial_prompt=self.config.transcription.nudge_into_punctuation + context if context != "" else self.config.transcription.nudge_into_punctuation,
+                                              beam_size=5,
+                                              without_timestamps=False,
+                                              word_timestamps=True,
+                                              condition_on_previous_text=False,
+                                              vad_filter=True,
+                                              vad_parameters=dict(min_silence_duration_ms=1000)
+                                              )
 
         all_words = []
         for segment in segments:
@@ -208,6 +210,11 @@ class Transcriptor():
         except Exception as e:
             self.log.error(e)
 
+    def unload_whisper(self):
+        self.log.info("Unloading Whisper model due to inactivity...")
+        self.whisper = None  # Modell freigeben
+        gc.collect()  # Garbage Collector manuell ausführen
+
     def producer(self):
         """Record audio and add it to the queue."""
         amount_wait_intervals = 0
@@ -241,7 +248,7 @@ class Transcriptor():
         self.play_sound_async(SoundEvent.RECORDING_END)
         self.log.info("End of producer thread")
 
-    def consumer(self, whisper: WhisperModel):
+    def consumer(self):
         """Process audio data from the queue and transcribe it."""
         self.log.info("Consumer thread started")
 
@@ -276,7 +283,7 @@ class Transcriptor():
             available_chunks = len(total_data) // self.config.recording.chunk_size
             self.log.debug(f"Available chunks: {available_chunks}, current size: {len(total_data)}, current start step: {window_start_step}, current stop step: {window_stop_step}")
 
-            # Process available audio data
+            # Process available audio data or sleep until one is available
             if window_stop_step <= available_chunks:
                 if last_run:
                     window_stop_step = len(total_data) / self.config.recording.chunk_size
@@ -285,7 +292,7 @@ class Transcriptor():
                 else:
                     self.log.info(f"Last run from {window_start_step} till {window_stop_step}")
                     np_data = self.get_audio_window(total_data, window_start_step, window_stop_step, self.config.recording.chunk_size)
-                transcribed, all_words = self.transcribe_window(whisper, np_data, confirmed_transcribed)
+                transcribed, all_words = self.transcribe_window(np_data, confirmed_transcribed)
                 self.log.info(f"From {window_start_step:.2f} seconds to {window_stop_step:.2f} seconds transcribed to: {transcribed}")
 
                 if len(all_words) > 0:
@@ -324,12 +331,11 @@ class Transcriptor():
                 window_stop_step = math.ceil(window_start_step + self.config.transcription.chunk_step_size)
                 word_lists.clear()
                 if self.config.transcription.terminal_share_progress:
-                    self.confirmed = confirmed_transcribed
-                    self.potential = transcribed
                     self.to_terminal(confirmed_transcribed + self.config.transcription.separation_confirmed_potential + transcribed)
 
+            self.confirmed = confirmed_transcribed
+            self.potential = transcribed
             self.log.info(f"Confirmed: {confirmed_transcribed} | Potential: {transcribed}")
-            time.sleep(self.config.processing.delay)
 
         self.play_sound_async(SoundEvent.PROCESSING_END)
         self.to_clipboard(confirmed_transcribed + self.config.transcription.separation_confirmed_potential + transcribed)
@@ -343,19 +349,23 @@ class Transcriptor():
 
     def main_logic(self):
         self.log.info("Starting transcription logic")
-        whisper = WhisperModel(self.config.model.name, device=self.config.model.device, compute_type=self.config.model.compute_type, download_root=self.config.model.dir)
-        self.log.info("Whisper model loaded")
+        if self.whisper is None:
+            self.whisper = WhisperModel(self.config.model.name, device=self.config.model.device, compute_type=self.config.model.compute_type, download_root=self.config.model.dir)
+            self.log.info("Whisper model loaded")
+
+        if self.unload_timer:
+            self.unload_timer.cancel()
+
         try:
             producer_thread = threading.Thread(target=self.producer, args=())
             producer_thread.start()
 
-            consumer_thread = threading.Thread(target=self.consumer, args=(whisper,))
+            consumer_thread = threading.Thread(target=self.consumer, args=())
             consumer_thread.start()
 
             consumer_thread.join()
         except Exception as e:
             self.log.error(f"Error in processing: {e}")
         finally:
-            del whisper
-            gc.collect()
-
+            self.unload_timer = threading.Timer(self.config.processing.keep_alive, self.unload_whisper)
+            self.unload_timer.start()

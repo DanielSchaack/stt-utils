@@ -7,7 +7,7 @@ from dataclasses import dataclass
 class TranscriptionConfig:
     language: str
     nudge_into_punctuation: str
-    chunk_step_size: int
+    chunk_step_size: float
     max_timespan: int
     to_clipboard: bool
     to_terminal: bool
@@ -33,6 +33,7 @@ class ProcessingConfig:
     min_timespan_done: int
     min_dupe_word_count: int
     min_dupe_between_records_needed: int
+    keep_alive: int
 
 
 @dataclass
@@ -133,7 +134,8 @@ def load_default_config() -> AppConfig:
             stop_timespan_done=5,
             min_timespan_done=2,
             min_dupe_word_count=2,
-            min_dupe_between_records_needed=2
+            min_dupe_between_records_needed=2,
+            keep_alive=60
         ),
 
         sound=SoundConfig(

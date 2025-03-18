@@ -1,7 +1,7 @@
 transcription:
   language: "de"
   nudge_into_punctuation: "Transkription mit Fokus auf Groß- und Kleinschreibung sowie Satzzeichen."
-  chunk_step_size: 1
+  chunk_step_size: 0.5
   max_timespan: 10
   to_clipboard: True
   to_terminal: True
@@ -21,6 +21,7 @@ processing:
   min_timespan_done: 2
   min_dupe_word_count: 2
   min_dupe_between_records_needed: 2
+  keep_alive: 60
 sound:
   recording_start_active: True
   recording_end_active: True

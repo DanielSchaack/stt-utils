@@ -48,7 +48,7 @@ def on_press(key):
 def on_release(key):
     global eos
     if ending_keys.issubset(pressed_keys):
-        print("End of Service")
+        print(transcriptor.config.transcription.terminal_eos)
         eos = True
         return False
     pressed_keys.discard(key)
@@ -63,7 +63,7 @@ async def event_stream(request: web.Request) -> web.StreamResponse:
         while resp.is_connected():
             if eos:
                 raise GracefulExit
-            # could be handled through events, but am lazy
+            # could be handled through events, or async queues or whatever, but am lazy
             cur_confirmed = transcriptor.confirmed
             cur_potential = transcriptor.potential
             if confirmed != cur_confirmed or potential != cur_potential:
