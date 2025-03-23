@@ -19,6 +19,18 @@ source ./venv/bin/activate
 pip install -r requirements.txt
 ```
 
+This setup makes use of
+- numpy
+- pyperclip
+- pyyaml
+- pynput
+- sounddevice
+- soundfile
+- asyncio
+- aiohttp
+- aiohttp_sse
+- faster_whisper
+
 # Usage
 ```bash
 source ./venv/bin/activate

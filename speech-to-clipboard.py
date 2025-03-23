@@ -55,6 +55,14 @@ def on_release(key):
     update_multi_key_status()
 
 
+# TODO refactor event_stream for using this instead of pulling
+async def get_latest_item(queue: asyncio.Queue):
+    while not queue.empty():
+        item = await queue.get()
+        queue.task_done()
+    return item
+
+
 async def event_stream(request: web.Request) -> web.StreamResponse:
     global eos
     confirmed: str = ""
@@ -63,6 +71,7 @@ async def event_stream(request: web.Request) -> web.StreamResponse:
         while resp.is_connected():
             if eos:
                 raise GracefulExit
+
             # could be handled through events, or async queues or whatever, but am lazy
             cur_confirmed = transcriptor.confirmed
             cur_potential = transcriptor.potential

@@ -3,11 +3,11 @@ transcription:
   nudge_into_punctuation: "Transkription mit Fokus auf Groß- und Kleinschreibung sowie Satzzeichen."
   chunk_step_size: 0.5
   max_timespan: 10
-  to_clipboard: True
-  to_terminal: True
-  terminal_share_progress: True
+  to_clipboard: true
+  to_terminal: true
+  terminal_share_progress: true
   separation_confirmed_potential: ""
-  terminal_share_eos: False
+  terminal_share_eos: false
   terminal_eos: ">><<"
   terminal_eot: "<><>"
 recording:
@@ -23,9 +23,9 @@ processing:
   min_dupe_between_records_needed: 2
   keep_alive: 60
 sound:
-  recording_start_active: True
-  recording_end_active: True
-  processing_end_active: True
+  recording_start_active: true
+  recording_end_active: true
+  processing_end_active: true
   relative_length: 1.0
   relative_volume: 1.0
   relative_speed: 2.0
@@ -35,4 +35,4 @@ model:
   compute_type: "float16"
   dir: "./models"
 ui:
-  enabled: True
+  enabled: false
